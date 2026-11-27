@@ -399,6 +399,7 @@
         />
         <button class="sc-btn" id="sc-check-btn" type="submit">Email me a sign-in link</button>
         <button class="sc-btn sc-btn-secondary" id="sc-signout-btn" type="button" hidden>Sign out</button>
+        <button class="sc-btn sc-btn-secondary" id="sc-export-btn" type="button" hidden>Download my data</button>
         <button class="sc-btn sc-btn-secondary" id="sc-delete-btn" type="button" hidden>Delete account</button>
       </form>
       <div class="sc-status-row">
@@ -658,6 +659,7 @@
         : "Free Tier";
       document.getElementById("sc-signout-btn").hidden = !signedIn;
       document.getElementById("sc-delete-btn").hidden = !signedIn;
+      document.getElementById("sc-export-btn").hidden = !signedIn;
       document.getElementById("sc-manage-btn").hidden = !(signedIn && currentEntitlement.can_manage_billing);
 
       const metaEl = document.getElementById("sc-period-meta");
@@ -740,6 +742,29 @@
     }
 
     // ---- Account deletion ----
+    async function downloadMyData() {
+      const exportBtn = document.getElementById("sc-export-btn");
+      exportBtn.disabled = true;
+      setStatus("Preparing your data…");
+      try {
+        const data = await api("/api/v1/account/export", { auth: true });
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "selenic-chronicle-my-data.json";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+        setStatus("Your data was downloaded as selenic-chronicle-my-data.json. Paddle holds your payment records.");
+      } catch (err) {
+        if (err.status === 401) signOut("Your session has expired. Request a new sign-in link.");
+        else setStatus("Your data can't be downloaded right now. Please try again shortly.");
+      } finally {
+        exportBtn.disabled = false;
+      }
+    }
+
     async function deleteAccount() {
       const confirmed = window.confirm(
         "Delete your Selenic Chronicle account data? This removes your email address and " +
@@ -857,6 +882,7 @@
 
       document.getElementById("sc-subscribe-btn").addEventListener("click", openCheckout);
       document.getElementById("sc-delete-btn").addEventListener("click", deleteAccount);
+      document.getElementById("sc-export-btn").addEventListener("click", downloadMyData);
       document.getElementById("sc-manage-btn").addEventListener("click", openBillingPortal);
 
       document.getElementById("sc-signout-btn").addEventListener("click", () => {

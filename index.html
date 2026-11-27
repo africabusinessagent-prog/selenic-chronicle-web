@@ -381,14 +381,14 @@
           type="email"
           inputmode="email"
           autocomplete="email"
-          placeholder="Enter subscriber email to check access"
+          placeholder="Subscriber email"
           required
         />
-        <button class="sc-btn" id="sc-check-btn" type="submit">Verify Entitlement</button>
-        <button class="sc-btn sc-btn-secondary" id="sc-clear-btn" type="button">Reset</button>
+        <button class="sc-btn" id="sc-check-btn" type="submit">Email me a sign-in link</button>
+        <button class="sc-btn sc-btn-secondary" id="sc-signout-btn" type="button" hidden>Sign out</button>
       </form>
       <div class="sc-status-row">
-        <span id="sc-status-message">Browse open folio summaries on Free, or verify an active €6.99/month subscription.</span>
+        <span id="sc-status-message" role="status">Browse open folio summaries on Free, or sign in with your €6.99/month subscription email.</span>
         <span class="sc-meta-mono" id="sc-period-meta">Tier: free</span>
       </div>
     </section>
@@ -425,7 +425,7 @@
         <div class="sc-upsell-box" data-free-upsell>
           <h3 class="sc-upsell-title">Subscriber Interrogation Layer (€6.99 / month)</h3>
           <p class="sc-upsell-copy">
-            Unlock full line-by-line VIGOR candidate envelopes, structural hypotheses across 15th-century script traditions, and comparative folio annotations by verifying an active subscription above.
+            Unlock full line-by-line VIGOR candidate envelopes, structural hypotheses across 15th-century script traditions, and comparative folio annotations by signing in above with your subscription email.
           </p>
         </div>
 
@@ -440,8 +440,11 @@
 
   <script>
     const SELENIC_API_BASE = "https://selenic-chronicle-api-537206536944.europe-west2.run.app";
-    const STORAGE_EMAIL_KEY = "selenic_chronicle_subscriber_email";
+    const STORAGE_SESSION_KEY = "selenic_chronicle_session";
+    const LEGACY_EMAIL_KEY = "selenic_chronicle_subscriber_email";
 
+    // Free previews only. Subscriber notes are served by the API to signed-in
+    // subscribers and must never be added to this public page.
     const FOLIOS = [
       {
         id: "f105v",
@@ -451,14 +454,7 @@
         lockt: "0.86 match",
         vgl1: "0.84 Δ-fit",
         freeSummary:
-          "Open preview for folio f105v: multi-stage VIGOR recognition evaluates ink continuity, stroke-proportion lock, and geometric invariants without relying on external legacy transcription schemes.",
-        proOverview:
-          "Full VIGOR stage breakdown for f105v line 8, combining incremental station weighting with comparative 15th-century script diagnostics.",
-        proFindings: [
-          "Atlas Zero isolates high-contrast ink segments while flagging minor vellum wear along upper ascenders.",
-          "LockT and VGL1 preserve competing structural candidates instead of forcing a brittle binary cut.",
-          "Comparative cross-check notes structural spacing patterns alongside continuous classical and Near Eastern scripts."
-        ]
+          "Open preview for folio f105v: multi-stage VIGOR recognition evaluates ink continuity, stroke-proportion lock, and geometric invariants without relying on external legacy transcription schemes."
       },
       {
         id: "page-5",
@@ -468,37 +464,83 @@
         lockt: "0.82 match",
         vgl1: "0.87 Δ-fit",
         freeSummary:
-          "Open preview for Folio 5: examines layout boundaries, recurring glyph clusters, and incremental candidate confidence across adjacent lines.",
-        proOverview:
-          "Subscriber interrogation notes for Folio 5 highlighting split-symbol candidates and marginal alignment cues.",
-        proFindings: [
-          "Intermediate predictor stations rank partial glyph matches prior to coordinator gate review.",
-          "Compound character splits are evaluated conservatively so fused strokes remain traceable.",
-          "Marginal annotations are indexed for cross-folio motif comparison across the manuscript."
-        ]
+          "Open preview for Folio 5: examines layout boundaries, recurring glyph clusters, and incremental candidate confidence across adjacent lines."
       }
     ];
 
+    const FREE_STATE = { tier: "free", status: "free", email: null, current_period_end: null };
+
     let activeFolioId = FOLIOS[0].id;
-    let currentEntitlement = { tier: "free", status: "free", email: null, current_period_end: null };
+    let currentEntitlement = FREE_STATE;
+    let notesCache = {};
+    let notesRequestId = 0;
 
-    async function checkEntitlement(email) {
-      const cleanEmail = (email || "").trim().toLowerCase();
-      if (!cleanEmail) {
-        return { tier: "free", status: "free", email: null, current_period_end: null };
+    // ---- Storage (wrapped: storage can be unavailable in private modes) ----
+    function readSession() {
+      try {
+        const raw = localStorage.getItem(STORAGE_SESSION_KEY);
+        if (!raw) return null;
+        const session = JSON.parse(raw);
+        if (!session || !session.token || new Date(session.expiresAt) <= new Date()) {
+          localStorage.removeItem(STORAGE_SESSION_KEY);
+          return null;
+        }
+        return session;
+      } catch (_err) {
+        return null;
       }
+    }
 
-      const endpoint = `${SELENIC_API_BASE}/api/v1/entitlements/status?email=${encodeURIComponent(cleanEmail)}`;
-      const response = await fetch(endpoint, {
-        method: "GET",
-        headers: { Accept: "application/json" }
+    function writeSession(session) {
+      try {
+        if (session) localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
+        else localStorage.removeItem(STORAGE_SESSION_KEY);
+      } catch (_err) {
+        /* Session then lasts only for this page view. */
+      }
+    }
+
+    let memorySession = null;
+    function getSession() {
+      return readSession() || memorySession;
+    }
+
+    // ---- API ----
+    class ApiError extends Error {
+      constructor(status, detail) {
+        super(detail || `Status ${status}`);
+        this.status = status;
+      }
+    }
+
+    async function api(path, { method = "GET", body, auth = false } = {}) {
+      const headers = { Accept: "application/json" };
+      if (body !== undefined) headers["Content-Type"] = "application/json";
+      if (auth) {
+        const session = getSession();
+        if (!session) throw new ApiError(401, "Sign-in required.");
+        headers.Authorization = `Bearer ${session.token}`;
+      }
+      const response = await fetch(`${SELENIC_API_BASE}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body)
       });
-
-      if (!response.ok) {
-        throw new Error(`Status ${response.status}`);
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_err) {
+        data = null;
       }
+      if (!response.ok) {
+        throw new ApiError(response.status, data && typeof data.detail === "string" ? data.detail : null);
+      }
+      return data;
+    }
 
-      return await response.json();
+    // ---- Rendering ----
+    function setStatus(text) {
+      document.getElementById("sc-status-message").textContent = text;
     }
 
     function renderFolioList() {
@@ -509,10 +551,13 @@
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = `sc-folio-btn${folio.id === activeFolioId ? " is-active" : ""}`;
-        btn.innerHTML = `
-          <span>${folio.code}</span>
-          <span class="sc-tag sc-tag-pro">VIGOR</span>
-        `;
+        btn.setAttribute("aria-pressed", folio.id === activeFolioId ? "true" : "false");
+        const code = document.createElement("span");
+        code.textContent = folio.code;
+        const tag = document.createElement("span");
+        tag.className = "sc-tag sc-tag-pro";
+        tag.textContent = "VIGOR";
+        btn.append(code, tag);
         btn.addEventListener("click", () => {
           activeFolioId = folio.id;
           renderFolioList();
@@ -522,9 +567,43 @@
       });
     }
 
+    function renderNotes(notes) {
+      document.getElementById("sc-pro-overview").textContent = notes ? notes.overview : "Loading subscriber notes…";
+      const findingsEl = document.getElementById("sc-pro-findings");
+      findingsEl.innerHTML = "";
+      ((notes && notes.findings) || []).forEach((item) => {
+        const li = document.createElement("li");
+        li.textContent = item;
+        findingsEl.appendChild(li);
+      });
+    }
+
+    async function loadNotes(folioId) {
+      if (notesCache[folioId]) {
+        renderNotes(notesCache[folioId]);
+        return;
+      }
+      renderNotes(null);
+      const requestId = ++notesRequestId;
+      try {
+        const notes = await api(`/api/v1/content/folios/${encodeURIComponent(folioId)}/notes`, { auth: true });
+        notesCache[folioId] = notes;
+        if (requestId === notesRequestId && activeFolioId === folioId) renderNotes(notes);
+      } catch (err) {
+        if (requestId !== notesRequestId) return;
+        if (err.status === 401 || err.status === 403) {
+          if (err.status === 401) signOut("Your session has expired. Request a new sign-in link.");
+          else applyEntitlementState(FREE_STATE);
+          return;
+        }
+        document.getElementById("sc-pro-overview").textContent =
+          "Subscriber notes could not be loaded right now. Please try again shortly.";
+      }
+    }
+
     function renderActiveFolio() {
       const folio = FOLIOS.find((f) => f.id === activeFolioId) || FOLIOS[0];
-      const isSubscriber = currentEntitlement && currentEntitlement.tier === "subscriber";
+      const isSubscriber = currentEntitlement.tier === "subscriber";
 
       document.getElementById("sc-folio-heading").textContent = folio.title;
       document.getElementById("sc-folio-code").textContent = folio.code;
@@ -532,15 +611,6 @@
       document.getElementById("sc-sig-lockt").textContent = folio.lockt;
       document.getElementById("sc-sig-vgl1").textContent = folio.vgl1;
       document.getElementById("sc-free-summary").textContent = folio.freeSummary;
-      document.getElementById("sc-pro-overview").textContent = folio.proOverview;
-
-      const findingsEl = document.getElementById("sc-pro-findings");
-      findingsEl.innerHTML = "";
-      folio.proFindings.forEach((item) => {
-        const li = document.createElement("li");
-        li.textContent = item;
-        findingsEl.appendChild(li);
-      });
 
       document.querySelectorAll("[data-subscriber-only]").forEach((el) => {
         el.hidden = !isSubscriber;
@@ -548,20 +618,25 @@
       document.querySelectorAll("[data-free-upsell]").forEach((el) => {
         el.hidden = isSubscriber;
       });
+
+      if (isSubscriber) loadNotes(folio.id);
+      else renderNotes({ overview: "", findings: [] });
     }
 
     function applyEntitlementState(data) {
-      currentEntitlement = data || { tier: "free", status: "free", email: null };
+      currentEntitlement = data || FREE_STATE;
       const isSubscriber = currentEntitlement.tier === "subscriber";
+      const signedIn = Boolean(getSession());
 
       document.body.dataset.entitlementTier = isSubscriber ? "subscriber" : "free";
       document.getElementById("sc-tier-label").textContent = isSubscriber
         ? "Subscriber (€6.99/mo)"
         : "Free Tier";
+      document.getElementById("sc-signout-btn").hidden = !signedIn;
 
       const metaEl = document.getElementById("sc-period-meta");
-      if (isSubscriber && currentEntitlement.email) {
-        const expiry = currentEntitlement.current_period_end
+      if (signedIn && currentEntitlement.email) {
+        const expiry = isSubscriber && currentEntitlement.current_period_end
           ? ` · renews ${new Date(currentEntitlement.current_period_end).toLocaleDateString()}`
           : "";
         metaEl.textContent = `${currentEntitlement.email}${expiry}`;
@@ -569,66 +644,116 @@
         metaEl.textContent = "Tier: free";
       }
 
+      if (!isSubscriber) notesCache = {};
       renderActiveFolio();
     }
 
-    async function runEntitlementLookup(email, { persist = true } = {}) {
-      const checkBtn = document.getElementById("sc-check-btn");
-      const statusEl = document.getElementById("sc-status-message");
-      const cleanEmail = (email || "").trim().toLowerCase();
+    // ---- Sign-in flow ----
+    function signOut(message) {
+      memorySession = null;
+      writeSession(null);
+      notesCache = {};
+      applyEntitlementState(FREE_STATE);
+      setStatus(message || "Signed out. Showing Free tier view.");
+    }
 
-      if (!cleanEmail) {
-        if (persist) localStorage.removeItem(STORAGE_EMAIL_KEY);
-        applyEntitlementState({ tier: "free", status: "free", email: null });
-        statusEl.textContent = "Showing Free tier view.";
+    async function refreshEntitlement() {
+      if (!getSession()) {
+        applyEntitlementState(FREE_STATE);
         return;
       }
+      try {
+        const data = await api("/api/v1/entitlements/me", { auth: true });
+        applyEntitlementState(data);
+        setStatus(
+          data.tier === "subscriber"
+            ? `Signed in as ${data.email}. Subscription active.`
+            : `Signed in as ${data.email}. No active subscription; Free tier active.`
+        );
+      } catch (err) {
+        if (err.status === 401) {
+          signOut("Your session has expired. Request a new sign-in link.");
+          return;
+        }
+        applyEntitlementState(FREE_STATE);
+        document.getElementById("sc-signout-btn").hidden = false;
+        setStatus("Entitlement server is currently unreachable; defaulting safely to Free tier.");
+      }
+    }
+
+    async function requestSignInLink(email) {
+      const checkBtn = document.getElementById("sc-check-btn");
+      const cleanEmail = (email || "").trim().toLowerCase();
+      if (!cleanEmail) return;
 
       checkBtn.disabled = true;
-      statusEl.textContent = `Checking entitlement for ${cleanEmail}…`;
-
+      setStatus("Sending sign-in link…");
       try {
-        const data = await checkEntitlement(cleanEmail);
-        if (persist) {
-          localStorage.setItem(STORAGE_EMAIL_KEY, cleanEmail);
-        }
-        applyEntitlementState(data);
-        statusEl.textContent =
-          data.tier === "subscriber"
-            ? `Active subscription verified for ${cleanEmail}.`
-            : `No active subscription found for ${cleanEmail}; Free tier active.`;
-      } catch (_err) {
-        applyEntitlementState({ tier: "free", status: "free", email: cleanEmail });
-        statusEl.textContent =
-          "Entitlement server is currently unreachable; defaulting safely to Free tier.";
+        const data = await api("/api/v1/auth/request-link", { method: "POST", body: { email: cleanEmail } });
+        setStatus(`${data.message} Open the link on this device.`);
+      } catch (err) {
+        if (err.status === 429) setStatus(err.message);
+        else if (err.status === 422) setStatus("Please enter a valid email address.");
+        else setStatus("Sign-in is temporarily unavailable. Please try again later.");
       } finally {
         checkBtn.disabled = false;
       }
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
+    async function completeSignInFromLink() {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const loginToken = params.get("login_token");
+      if (!loginToken) return;
+
+      // Remove the token from the address bar and browser history immediately.
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      setStatus("Signing you in…");
+      try {
+        const data = await api("/api/v1/auth/session", { method: "POST", body: { token: loginToken } });
+        memorySession = { token: data.session_token, expiresAt: data.expires_at };
+        writeSession(memorySession);
+      } catch (err) {
+        setStatus(
+          err.status === 401
+            ? "That sign-in link has expired or is invalid. Request a new one."
+            : "Sign-in is temporarily unavailable. Please try again later."
+        );
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", async () => {
+      // Earlier versions stored a bare email that granted access; discard it.
+      try {
+        localStorage.removeItem(LEGACY_EMAIL_KEY);
+      } catch (_err) {
+        /* ignore */
+      }
+
       renderFolioList();
       renderActiveFolio();
 
       const form = document.getElementById("sc-entitlement-form");
       const input = document.getElementById("sc-email-input");
-      const clearBtn = document.getElementById("sc-clear-btn");
 
       form.addEventListener("submit", (event) => {
         event.preventDefault();
-        runEntitlementLookup(input.value, { persist: true });
+        requestSignInLink(input.value);
       });
 
-      clearBtn.addEventListener("click", () => {
+      document.getElementById("sc-signout-btn").addEventListener("click", () => {
         input.value = "";
-        runEntitlementLookup("", { persist: true });
+        signOut();
       });
 
-      const savedEmail = localStorage.getItem(STORAGE_EMAIL_KEY);
-      if (savedEmail) {
-        input.value = savedEmail;
-        runEntitlementLookup(savedEmail, { persist: false });
-      }
+      // A sign-in link opened in a tab that already shows this page only changes the hash.
+      window.addEventListener("hashchange", async () => {
+        if (!window.location.hash.includes("login_token=")) return;
+        await completeSignInFromLink();
+        await refreshEntitlement();
+      });
+
+      await completeSignInFromLink();
+      await refreshEntitlement();
     });
   </script>
 </body>

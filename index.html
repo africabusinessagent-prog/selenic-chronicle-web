@@ -11,7 +11,7 @@
       --bg-panel-muted: #efe8da;
       --ink-primary: #1c1917;
       --ink-secondary: #57534e;
-      --ink-muted: #78716c;
+      --ink-muted: #6b645e; /* at least 4.5:1 on every surface */
       --border-hairline: #dfd5c3;
       --accent-brass: #8a5a1e;
       --accent-brass-soft: #f5ebd8;
@@ -305,6 +305,12 @@
       color: var(--ink-primary);
     }
 
+    .sc-signal-note {
+      margin: -8px 0 18px;
+      font-size: 0.8rem;
+      color: var(--ink-muted);
+    }
+
     .sc-passage {
       font-family: var(--font-serif);
       font-size: 1.02rem;
@@ -412,7 +418,7 @@
         <div class="sc-folio-list" id="sc-folio-list"></div>
       </aside>
 
-      <main class="sc-card" id="sc-reader-stage" aria-live="polite">
+      <main class="sc-card" id="sc-reader-stage">
         <div class="sc-reader-top">
           <h2 class="sc-folio-heading" id="sc-folio-heading">Folio Overview</h2>
           <span class="sc-meta-mono" id="sc-folio-code">VIGOR</span>
@@ -432,6 +438,7 @@
             <div class="sc-signal-value" id="sc-sig-vgl1">—</div>
           </div>
         </div>
+        <p class="sc-signal-note" id="sc-signal-note">Illustrative figures from research in progress, not independently verified measurements.</p>
 
         <p class="sc-passage" id="sc-free-summary"></p>
 

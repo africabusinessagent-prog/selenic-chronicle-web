@@ -350,6 +350,19 @@
       color: var(--accent-emerald);
     }
 
+    .sc-billing-row {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .sc-billing-note {
+      font-size: 0.8rem;
+      color: var(--ink-secondary);
+    }
+
     .sc-pro-list {
       margin: 8px 0 0;
       padding-left: 18px;
@@ -427,12 +440,19 @@
           <p class="sc-upsell-copy">
             Unlock full line-by-line VIGOR candidate envelopes, structural hypotheses across 15th-century script traditions, and comparative folio annotations by signing in above with your subscription email.
           </p>
+          <div class="sc-billing-row" id="sc-subscribe-row" hidden>
+            <button class="sc-btn" id="sc-subscribe-btn" type="button">Subscribe · €6.99/month</button>
+            <span class="sc-billing-note">Secure checkout by Paddle, our reseller. Cancel anytime.</span>
+          </div>
         </div>
 
         <div class="sc-pro-panel" data-subscriber-only hidden>
           <h3 class="sc-pro-title">Subscriber Interrogation Notes (Unlocked)</h3>
           <p class="sc-upsell-copy" id="sc-pro-overview"></p>
           <ul class="sc-pro-list" id="sc-pro-findings"></ul>
+          <div class="sc-billing-row">
+            <button class="sc-btn sc-btn-secondary" id="sc-manage-btn" type="button" hidden>Manage subscription</button>
+          </div>
         </div>
       </main>
     </div>
@@ -470,7 +490,10 @@
 
     const FREE_STATE = { tier: "free", status: "free", email: null, current_period_end: null };
 
+    const PADDLE_JS_URL = "https://cdn.paddle.com/paddle/v2/paddle.js";
+
     let activeFolioId = FOLIOS[0].id;
+    let billingConfig = null;
     let currentEntitlement = FREE_STATE;
     let notesCache = {};
     let notesRequestId = 0;
@@ -633,6 +656,7 @@
         ? "Subscriber (€6.99/mo)"
         : "Free Tier";
       document.getElementById("sc-signout-btn").hidden = !signedIn;
+      document.getElementById("sc-manage-btn").hidden = !(signedIn && currentEntitlement.can_manage_billing);
 
       const metaEl = document.getElementById("sc-period-meta");
       if (signedIn && currentEntitlement.email) {
@@ -646,6 +670,71 @@
 
       if (!isSubscriber) notesCache = {};
       renderActiveFolio();
+    }
+
+    // ---- Billing (Paddle Checkout and customer portal) ----
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`Could not load ${src}`));
+        document.head.appendChild(script);
+      });
+    }
+
+    function onPaddleEvent(event) {
+      if (event && event.name === "checkout.completed") {
+        setStatus(
+          "Payment received. Thank you! We've emailed you a sign-in link; open it on this device to start reading."
+        );
+      }
+    }
+
+    async function setupBilling() {
+      try {
+        const config = await api("/api/v1/billing/config");
+        if (!config || !config.enabled) return;
+        await loadScript(PADDLE_JS_URL);
+        if (config.environment === "sandbox") window.Paddle.Environment.set("sandbox");
+        window.Paddle.Initialize({ token: config.client_token, eventCallback: onPaddleEvent });
+        billingConfig = config;
+        document.getElementById("sc-subscribe-row").hidden = false;
+      } catch (_err) {
+        // Checkout unavailable: the Subscribe button stays hidden.
+      }
+    }
+
+    function checkoutEmail() {
+      if (currentEntitlement.email) return currentEntitlement.email;
+      const input = document.getElementById("sc-email-input");
+      const value = input.value.trim().toLowerCase();
+      return value && input.checkValidity() ? value : null;
+    }
+
+    function openCheckout() {
+      if (!billingConfig || !window.Paddle) return;
+      const email = checkoutEmail();
+      window.Paddle.Checkout.open({
+        items: [{ priceId: billingConfig.price_id, quantity: 1 }],
+        ...(email ? { customer: { email } } : {}),
+        settings: { displayMode: "overlay", theme: "light" }
+      });
+    }
+
+    async function openBillingPortal() {
+      const manageBtn = document.getElementById("sc-manage-btn");
+      manageBtn.disabled = true;
+      setStatus("Opening your billing portal…");
+      try {
+        const data = await api("/api/v1/billing/portal", { method: "POST", auth: true });
+        window.location.assign(data.url);
+      } catch (err) {
+        if (err.status === 401) signOut("Your session has expired. Request a new sign-in link.");
+        else setStatus("The billing portal is unavailable right now. Please try again shortly.");
+      } finally {
+        manageBtn.disabled = false;
+      }
     }
 
     // ---- Sign-in flow ----
@@ -740,6 +829,9 @@
         requestSignInLink(input.value);
       });
 
+      document.getElementById("sc-subscribe-btn").addEventListener("click", openCheckout);
+      document.getElementById("sc-manage-btn").addEventListener("click", openBillingPortal);
+
       document.getElementById("sc-signout-btn").addEventListener("click", () => {
         input.value = "";
         signOut();
@@ -752,6 +844,7 @@
         await refreshEntitlement();
       });
 
+      setupBilling();
       await completeSignInFromLink();
       await refreshEntitlement();
     });

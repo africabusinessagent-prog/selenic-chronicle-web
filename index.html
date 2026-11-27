@@ -416,6 +416,7 @@
         />
         <button class="sc-btn" id="sc-check-btn" type="submit">Email me a sign-in link</button>
         <button class="sc-btn sc-btn-secondary" id="sc-signout-btn" type="button" hidden>Sign out</button>
+        <button class="sc-btn sc-btn-secondary" id="sc-delete-btn" type="button" hidden>Delete account</button>
       </form>
       <div class="sc-status-row">
         <span id="sc-status-message" role="status">Browse open folio summaries on Free, or sign in with your €6.99/month subscription email.</span>
@@ -679,6 +680,7 @@
         ? "Subscriber (€6.99/mo)"
         : "Free Tier";
       document.getElementById("sc-signout-btn").hidden = !signedIn;
+      document.getElementById("sc-delete-btn").hidden = !signedIn;
       document.getElementById("sc-manage-btn").hidden = !(signedIn && currentEntitlement.can_manage_billing);
 
       const metaEl = document.getElementById("sc-period-meta");
@@ -757,6 +759,30 @@
         else setStatus("The billing portal is unavailable right now. Please try again shortly.");
       } finally {
         manageBtn.disabled = false;
+      }
+    }
+
+    // ---- Account deletion ----
+    async function deleteAccount() {
+      const confirmed = window.confirm(
+        "Delete your Selenic Chronicle account data? This removes your email address and " +
+        "subscription record from our service and can't be undone. If your subscription is " +
+        "still active, cancel it first with Manage subscription."
+      );
+      if (!confirmed) return;
+      const deleteBtn = document.getElementById("sc-delete-btn");
+      deleteBtn.disabled = true;
+      setStatus("Deleting your account data…");
+      try {
+        await api("/api/v1/account/delete", { method: "POST", body: { confirm: true }, auth: true });
+        document.getElementById("sc-email-input").value = "";
+        signOut("Your account data has been deleted. Paddle keeps its own payment records.");
+      } catch (err) {
+        if (err.status === 401) signOut("Your session has expired. Request a new sign-in link.");
+        else if (err.status === 409) setStatus(err.message);
+        else setStatus("Account deletion is unavailable right now. Please try again shortly.");
+      } finally {
+        deleteBtn.disabled = false;
       }
     }
 
@@ -853,6 +879,7 @@
       });
 
       document.getElementById("sc-subscribe-btn").addEventListener("click", openCheckout);
+      document.getElementById("sc-delete-btn").addEventListener("click", deleteAccount);
       document.getElementById("sc-manage-btn").addEventListener("click", openBillingPortal);
 
       document.getElementById("sc-signout-btn").addEventListener("click", () => {

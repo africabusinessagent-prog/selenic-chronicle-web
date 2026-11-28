@@ -20,3 +20,15 @@ Free folio previews are part of the page. Everything else comes from the Selenic
 - `terms.html`, `privacy.html` and `refunds.html` are the legal pages. They're linked from the page footer and are required for Paddle's website approval.
 - The page loads Paddle.js only when the API reports billing is configured.
 - `africabusinessagent-prog.github.io` and `selenic-chronicle-web` hold identical copies of this site. Make each change in both until one is retired.
+
+## Checks
+
+Every pull request and every push to `main` runs `ci/check_site.py` (`.github/workflows/site-checks.yml`). It fails if:
+
+- the paid subscriber notes, or the `proFindings` and `proOverview` keys that once held them, appear in a page;
+- an inline script has a syntax error;
+- a script looks up an element id the page doesn't have, or an id is used twice;
+- a local link, image or `#anchor` points at nothing;
+- the API base URL isn't https.
+
+Run it locally with `python3 ci/check_site.py .` (needs Python 3 and Node.js). On pushes to `main`, the workflow also warns if the pages differ from the twin repo's `main`.

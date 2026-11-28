@@ -1,0 +1,47 @@
+name: Site checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Paywall, scripts and links
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the pages
+        run: python3 -I ci/check_site.py .
+
+      # Two public repos hold the same site. Until one is retired, warn when
+      # their main branches drift apart. Pull requests are skipped, because
+      # each side differs until its twin is merged.
+      - name: Compare with the twin repo
+        if: github.event_name == 'push'
+        run: |
+          case "$GITHUB_REPOSITORY" in
+            */selenic-chronicle-web) twin=africabusinessagent-prog/africabusinessagent-prog.github.io ;;
+            */africabusinessagent-prog.github.io) twin=africabusinessagent-prog/selenic-chronicle-web ;;
+            *) echo "No twin configured for $GITHUB_REPOSITORY"; exit 0 ;;
+          esac
+          drift=0
+          for page in *.html; do
+            if ! curl -fsS "https://raw.githubusercontent.com/$twin/main/$page" -o "$RUNNER_TEMP/twin.html"; then
+              echo "::warning::$page is not on $twin main"; drift=1; continue
+            fi
+            cmp -s "$page" "$RUNNER_TEMP/twin.html" || { echo "::warning::$page differs from $twin main"; drift=1; }
+          done
+          [ "$drift" = 0 ] && echo "Pages match $twin main"
+          exit 0

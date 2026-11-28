@@ -369,6 +369,23 @@
       color: var(--ink-secondary);
     }
 
+    .sc-billing-note a {
+      color: var(--accent-brass);
+    }
+
+    .sc-footer {
+      margin-top: 28px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border-hairline);
+      font-size: 0.82rem;
+      color: var(--ink-secondary);
+    }
+
+    .sc-footer a {
+      color: var(--accent-brass);
+      margin-right: 14px;
+    }
+
     .sc-pro-list {
       margin: 8px 0 0;
       padding-left: 18px;
@@ -449,7 +466,8 @@
           </p>
           <div class="sc-billing-row" id="sc-subscribe-row" hidden>
             <button class="sc-btn" id="sc-subscribe-btn" type="button">Subscribe · €6.99/month</button>
-            <span class="sc-billing-note">Secure checkout by Paddle, our reseller. Cancel anytime.</span>
+            <span class="sc-billing-note">Secure checkout by Paddle, our reseller. Cancel anytime. 14-day refunds.
+              By subscribing you agree to our <a href="terms.html">Terms</a> and <a href="refunds.html">Refund Policy</a>.</span>
           </div>
         </div>
 
@@ -463,6 +481,11 @@
         </div>
       </main>
     </div>
+
+    <footer class="sc-footer">
+      <nav aria-label="Legal"><a href="terms.html">Terms</a><a href="privacy.html">Privacy</a><a href="refunds.html">Refunds</a></nav>
+      <p>Our order process is conducted by our online reseller Paddle.com, the Merchant of Record for all our orders.</p>
+    </footer>
   </div>
 
   <script>
